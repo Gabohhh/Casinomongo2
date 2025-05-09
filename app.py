@@ -73,18 +73,82 @@ def admin_users():
     return render_template('admin_users.html',
                          users=list(users.find()))
 
+@app.route('/admin/users/add', methods=['GET', 'POST'])
+def add_user():
+    if not is_admin():
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        try:
+            users.insert_one({
+                'email': request.form['email'],
+                'password': hash_password(request.form['password']),
+                'role': request.form['role'],
+                'balance': float(request.form.get('balance', 0)),
+                'active': 'active' in request.form,
+                'created_at': datetime.now()
+            })
+            flash('User added successfully', 'success')
+            return redirect(url_for('admin_users'))
+        except Exception as e:
+            flash(f'Error adding user: {str(e)}', 'danger')
+    
+    return render_template('add_edit_user.html', user=None)
+
+@app.route('/admin/users/edit/<user_id>', methods=['GET', 'POST'])
+def edit_user(user_id):
+    if not is_admin():
+        return redirect(url_for('dashboard'))
+    
+    user = users.find_one({'_id': ObjectId(user_id)})
+    
+    if request.method == 'POST':
+        try:
+            update_data = {
+                'email': request.form['email'],
+                'role': request.form['role'],
+                'balance': float(request.form.get('balance', 0)),
+                'active': 'active' in request.form
+            }
+            
+            if request.form.get('password'):
+                update_data['password'] = hash_password(request.form['password'])
+            
+            users.update_one({'_id': ObjectId(user_id)}, {'$set': update_data})
+            flash('User updated successfully', 'success')
+            return redirect(url_for('admin_users'))
+        except Exception as e:
+            flash(f'Error updating user: {str(e)}', 'danger')
+    
+    return render_template('add_edit_user.html', user=user)
+
+@app.route('/admin/users/delete/<user_id>')
+def delete_user(user_id):
+    if not is_admin():
+        return redirect(url_for('dashboard'))
+    
+    try:
+        users.delete_one({'_id': ObjectId(user_id)})
+        flash('User deleted successfully', 'success')
+    except Exception as e:
+        flash(f'Error deleting user: {str(e)}', 'danger')
+    
+    return redirect(url_for('admin_users'))
+
 @app.route('/admin/transactions/<user_id>')
 def user_transactions(user_id):
     if not is_admin(): 
         return jsonify({'error': 'Unauthorized'}), 401
     
     try:
-        tx_list = list(transactions.find({'user_id': ObjectId(user_id)}))
+        tx_list = list(transactions.find({'user_id': ObjectId(user_id)}).sort('date', -1))
         return jsonify([{
             'date': tx['date'].strftime('%Y-%m-%d %H:%M'),
             'type': tx['type'],
             'amount': tx['amount'],
-            'game': tx.get('game', 'N/A')
+            'game': tx.get('game', 'N/A'),
+            'balance_change': tx.get('balance_change', 'N/A'),
+            'new_balance': tx.get('new_balance', 'N/A')
         } for tx in tx_list])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -93,6 +157,41 @@ def user_transactions(user_id):
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+def create_sample_transactions():
+    if transactions.count_documents({}) == 0:
+        sample_user = users.find_one({'email': 'admin@casino.com'})
+        if sample_user:
+            sample_tx = [
+                {
+                    'user_id': sample_user['_id'],
+                    'type': 'deposit',
+                    'amount': 1000,
+                    'balance_change': '+1000',
+                    'new_balance': 1000,
+                    'date': datetime.now(),
+                    'game': 'N/A'
+                },
+                {
+                    'user_id': sample_user['_id'],
+                    'type': 'game',
+                    'amount': -200,
+                    'balance_change': '-200',
+                    'new_balance': 800,
+                    'date': datetime.now(),
+                    'game': 'Blackjack'
+                },
+                {
+                    'user_id': sample_user['_id'],
+                    'type': 'game',
+                    'amount': 500,
+                    'balance_change': '+500',
+                    'new_balance': 1300,
+                    'date': datetime.now(),
+                    'game': 'Slots'
+                }
+            ]
+            transactions.insert_many(sample_tx)
 
 if __name__ == '__main__':
     # Create admin if not exists
@@ -104,4 +203,6 @@ if __name__ == '__main__':
             'balance': 0,
             'created_at': datetime.now()
         })
+    
+    create_sample_transactions()
     app.run(debug=True)
